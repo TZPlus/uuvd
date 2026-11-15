@@ -40,7 +40,7 @@ struct SavedDisplayState: Codable {
     var hasMode: Bool { width > 0 && height > 0 }
 }
 
-public final class DisplayManager {
+public final class DisplayManager: @unchecked Sendable {
     public init() {}
 
     static let vendorID: UInt32 = 0x5555
@@ -50,6 +50,9 @@ public final class DisplayManager {
     private var shutdownCompletion: (() -> Void)?
     /// 是否应禁用物理屏（由 Coordinator 按配置决定）
     public var shouldDisablePhysical: () -> Bool = { false }
+    /// 是否把虚拟屏设为主屏（默认 false：不碰显示器布局事务，风险最低；
+    /// 需要 Dock/新窗口默认落到虚拟屏时再开，见 docs/requirements 20261115）
+    public var shouldSetMain: () -> Bool = { false }
     /// 用户手动恢复后，本次连接内不再禁用
     private var physicalOverride = false
 
@@ -181,15 +184,25 @@ public final class DisplayManager {
         }
     }
 
-    /// 在 cgQueue 执行配置事务，回到主线程后进入稳定等待；事务超时则进入保护状态
+    /// 在 cgQueue 执行配置事务，回到主线程后进入稳定等待。
+    /// 1014/cannotComplete 重试一次再锁死：本机实测虚拟屏上线后 10s 的瞬时 1014 会在几秒内自愈
+    /// （空事务随即恢复），立刻进入保护状态太草率；连续两次失败才认定 WindowServer 真卡死
     private func runCG(settle: TimeInterval, _ work: @escaping () -> CGError) {
         busy = true
-        cgQueue.async {
-            let err = work()
-            DispatchQueue.main.async {
-                if err == .cannotComplete || err.rawValue == 1014 { self.enterWedged(err) }
-                self.finish(settle: settle)
-            }
+        cgQueue.async { self.attempt(settle: settle, work, retried: false) }
+    }
+
+    private func attempt(settle: TimeInterval, _ work: @escaping () -> CGError, retried: Bool) {
+        let err = work()
+        let retryable = (err == .cannotComplete || err.rawValue == 1014)
+        if retryable, !retried {
+            Log.warn("⚠️ 显示配置事务 CGError=\(err.rawValue)，3s 后重试一次")
+            cgQueue.asyncAfter(deadline: .now() + 3) { self.attempt(settle: settle, work, retried: true) }
+            return
+        }
+        DispatchQueue.main.async {
+            if retryable { self.enterWedged(err) }
+            self.finish(settle: settle)
         }
     }
 
@@ -291,6 +304,11 @@ public final class DisplayManager {
             return finish(settle: 1.0)
         }
 
+        // 默认不设主屏：纯建屏/撤屏不走任何配置事务（对 WindowServer 风险最小）
+        if !mainSet, !shouldSetMain() {
+            mainSet = true
+        }
+
         if !mainSet, let id = vd?.displayID {
             let online = DisplayManager.onlineDisplays()
             guard online.contains(id) else {
@@ -367,7 +385,7 @@ public final class DisplayManager {
         let settings = CGVirtualDisplaySettings()
         settings.hiDPI = cfg.hiDPI
         let mw = cfg.hiDPI ? w / 2 : w, mh = cfg.hiDPI ? h / 2 : h
-        settings.modes = [CGVirtualDisplayMode(width: UInt(mw), height: UInt(mh), refreshRate: 60)]
+        settings.modes = [CGVirtualDisplayMode(width: UInt(mw), height: UInt(mh), refreshRate: 60) as Any]
         guard autoreleasepool(invoking: { display.apply(settings) }) else {
             Log.error("❌ 虚拟屏 applySettings 失败，稳定后释放")
             bornAt[display.displayID] = Date()
@@ -389,7 +407,8 @@ public final class DisplayManager {
     }
 
     /// 还原物理屏：先把分辨率恢复成建屏前记下的模式，再恢复位置。
-    /// 只还原位置会让分辨率停在系统默认值（例如 1920×1080）
+    /// 只还原位置会让分辨率停在系统默认值（例如 1920×1080）。
+    /// 没有实际变化就不做事务：任何配置事务都有触发 WindowServer 卡死的风险
     private static func restoreStates(_ states: [CGDirectDisplayID: SavedDisplayState]) -> CGError {
         let online = Set(onlineDisplays())
         let targets = states.filter { online.contains($0.key) }
@@ -412,8 +431,25 @@ public final class DisplayManager {
             }
         }
 
+        // 逐块比对现状：位置与模式都没变的屏不参与事务
+        var changed: [CGDirectDisplayID: SavedDisplayState] = [:]
+        for (id, state) in targets {
+            let b = CGDisplayBounds(id)
+            let originSame = Double(b.origin.x) == state.x && Double(b.origin.y) == state.y
+            var modeSame = true
+            if let want = resolved[id], let cur = CGDisplayCopyDisplayMode(id) {
+                modeSame = cur.width == want.width && cur.height == want.height
+                    && cur.pixelWidth == want.pixelWidth && cur.pixelHeight == want.pixelHeight
+            }
+            if !originSame || !modeSame { changed[id] = state }
+        }
+        guard !changed.isEmpty else {
+            Log.info("显示器布局与分辨率无变化，跳过还原事务")
+            return .success
+        }
+
         let err = applyDisplayConfig { cfg in
-            for (id, state) in targets {
+            for (id, state) in changed {
                 if let mode = resolved[id] {
                     CGConfigureDisplayWithDisplayMode(cfg, id, mode, nil)
                 }
@@ -421,7 +457,7 @@ public final class DisplayManager {
             }
         }
         if err == .success {
-            let restored = targets.map { "#\($0.key) \($0.value.width)×\($0.value.height)" }.joined(separator: ", ")
+            let restored = changed.map { "#\($0.key) \($0.value.width)×\($0.value.height)" }.joined(separator: ", ")
             Log.info("✅ 已还原显示器分辨率与布局：\(restored)")
         } else {
             Log.warn("⚠️ 还原布局 CGError=\(err.rawValue)")

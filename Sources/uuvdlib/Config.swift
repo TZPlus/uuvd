@@ -28,18 +28,24 @@ public struct AppConfig: Codable {
     public var paused = false
     /// 远程时关闭物理屏（缺省关闭，配置里显式开启）
     public var disablePhysical: Bool?
+    /// 把虚拟屏设为主屏（需要调整显示器布局事务，有极低概率触发 WindowServer 卡死；缺省关闭）
+    public var setMain: Bool?
 
     public init() {}
 
     public var shouldDisablePhysical: Bool { disablePhysical ?? false }
+    public var shouldSetMain: Bool { setMain ?? false }
 }
 
-public final class ConfigStore {
+/// 配置读写集中在主线程（Coordinator），@unchecked Sendable 仅满足编译器；
+/// didSet 的保存有锁保护
+public final class ConfigStore: @unchecked Sendable {
     public static let shared = ConfigStore()
 
     public static let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("uuvd", isDirectory: true)
     private let url = ConfigStore.dir.appendingPathComponent("config.json")
+    private let lock = NSLock()
 
     public var config: AppConfig {
         didSet { save() }
@@ -66,7 +72,8 @@ public final class ConfigStore {
             { "name": "iPad Pro", "width": 2388, "height": 1668, "hiDPI": true }
           ],
           "paused": false,
-          "disablePhysical": false
+          "disablePhysical": false,
+          "setMain": false
         }
         """
         try? template.data(using: .utf8)?.write(to: url, options: .atomic)
@@ -80,8 +87,9 @@ public final class ConfigStore {
     private func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(config) {
-            try? data.write(to: url, options: .atomic)
-        }
+        guard let data = try? enc.encode(config) else { return }
+        lock.lock()
+        try? data.write(to: url, options: .atomic)
+        lock.unlock()
     }
 }

@@ -6,7 +6,7 @@
 // 没在跑的时候推流状态报「未知」（nil），连接判定照样靠覆盖窗口和控制端表格（源自 Snug，MIT）
 import Foundation
 
-final class CaptureLogWatcher {
+final class CaptureLogWatcher: @unchecked Sendable {
     static let restartDelays: [TimeInterval] = [1, 2, 5, 10, 30, 60]
     static let stableAfter: TimeInterval = 60
     static let streamArguments = ["stream", "--style", "ndjson", "--predicate", CaptureLogParser.predicate]

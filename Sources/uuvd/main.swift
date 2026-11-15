@@ -31,6 +31,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installHotkey()
         coordinator.onChange = { [weak self] in self?.refreshStatus() }
         coordinator.start()
+        if let sim = simulateTarget {
+            runSimulation(name: sim.name, seconds: sim.seconds)
+        }
+    }
+
+    /// 调试：模拟一次连入/断开（不依赖 UU）。注入合成信号走正常事件路径
+    private func runSimulation(name: String, seconds: Double) {
+        Log.info("模拟连入：\(name)，\(Int(seconds)) 秒后断开")
+        coordinator.simulatedName = name
+        coordinator.update(UUSignals(overlayVisible: true, controllers: .unrecognized, captureActive: nil), now: Date())
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            self.coordinator.simulatedName = nil
+            self.coordinator.update(UUSignals(overlayVisible: false, controllers: .unrecognized, captureActive: false), now: Date())
+            // 断开后要等 15s 重连窗口 + 撤屏收尾（释放前确认屏上线且存活 ≥2.5s，最多再等 8s），留足再退出
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                Log.flush()
+                exit(0)
+            }
+        }
     }
 
     private func installStatusBar() {
@@ -121,33 +140,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// 调试：--simulate "<设备名>" [秒数]
+// 调试：--simulate "<设备名>" [秒数]：只注入目标，启动与收尾都走正常 App 生命周期，
+// 避免重复 start 把刚建的屏当残留拆掉
+nonisolated(unsafe) var simulateTarget: (name: String, seconds: Double)?
 if let i = CommandLine.arguments.firstIndex(of: "--simulate"), i + 1 < CommandLine.arguments.count {
-    let name = CommandLine.arguments[i + 1]
     let seconds = i + 2 < CommandLine.arguments.count ? Double(CommandLine.arguments[i + 2]) ?? 10 : 10
-    let delegate = MainActor.assumeIsolated { AppDelegate() }
-    let app = NSApplication.shared
-    app.delegate = delegate
-    app.setActivationPolicy(.accessory)
-    MainActor.assumeIsolated {
-        Log.openFile()
-        delegate.coordinator.simulatedName = name
-        delegate.coordinator.start()
-        delegate.coordinator.update(UUSignals(overlayVisible: true, controllers: .unrecognized, captureActive: nil), now: Date())
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-            delegate.coordinator.simulatedName = nil
-            delegate.coordinator.update(UUSignals(overlayVisible: false, controllers: .unrecognized, captureActive: false), now: Date())
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                Log.flush()
-                exit(0)
-            }
-        }
-    }
-    app.run()
-} else {
-    let app = NSApplication.shared
-    let delegate = MainActor.assumeIsolated { AppDelegate() }
-    app.delegate = delegate
-    app.setActivationPolicy(.accessory)
-    app.run()
+    simulateTarget = (name: CommandLine.arguments[i + 1], seconds: seconds)
 }
+
+let app = NSApplication.shared
+let delegate = MainActor.assumeIsolated { AppDelegate() }
+app.delegate = delegate
+app.setActivationPolicy(.accessory)
+app.run()

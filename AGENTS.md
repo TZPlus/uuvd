@@ -12,6 +12,7 @@ UU远程 Mac 被控端的最小虚拟屏工具：识别控制端设备 → 按�
 
 ## 工程纪律
 - 注释用中文，写"为什么"；commit 中文
+- 验证命令：`scripts/check.sh`（swift build + 单测小程序）；诊断用 `swift run uuvdprobe --list/--touch`
 - 上游来源的代码改动保留原注释，新增坑记录追加在对应文件头部
 - 虚拟屏/物理屏相关代码改动前必读 `Sources/uuvdlib/DisplayManager.swift` 和 `PhysicalDisplays.swift` 头部的坑清单（WindowServer 脆弱性）
 - 验证：`swift build` + `swift test`；真机验证需 iPad + UU远程

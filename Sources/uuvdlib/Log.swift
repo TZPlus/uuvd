@@ -51,6 +51,7 @@ public enum Log {
         }
         let line = "[\(formatter.string(from: Date()))] [\(level.rawValue)] \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
+        FileHandle.standardOutput.write(data)
         state.withLock { $0?.write(data) }
     }
 }

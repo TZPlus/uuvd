@@ -1,7 +1,7 @@
 // 会话变化 → 查设备配置 → 建屏/撤屏（源自 UUyc-companion 的 Coordinator，MIT，配合 Snug 会话层重写）
 import Foundation
 
-public final class Coordinator {
+public final class Coordinator: @unchecked Sendable {
     public init() {}
 
     let sensor = UUSensor()
@@ -35,6 +35,7 @@ public final class Coordinator {
             guard let self else { return false }
             return self.store.config.shouldDisablePhysical && PhysicalDisplays.available
         }
+        display.shouldSetMain = { [weak self] in self?.store.config.shouldSetMain ?? false }
         display.recoverIfNeeded()
         sensor.start()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }

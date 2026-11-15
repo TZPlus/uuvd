@@ -3,7 +3,7 @@
 // 主线程一卡，后台早就读好的结果也会被当成过期，没有覆盖窗口的会话就会被误判断开（源自 Snug，MIT）
 import Foundation
 
-final class ControllerReader {
+final class ControllerReader: @unchecked Sendable {
     /// 一次读取超过这么久就不可信（UU 卡住时 AX 每次调用最多等 1 秒，一棵树要调很多次）
     static let maxReadDuration: TimeInterval = 2
 
