@@ -43,6 +43,36 @@ if args.contains("--touch") {
     exit(err == .success ? 0 : 1)
 }
 
+// 救急：把被 CGSConfigureDisplayEnabled 禁用的屏重新启用，并挪回 (0,0)，
+// 其他屏（含虚拟屏）整体右移到它右边。验证"1014 是原点冲突导致"的假设
+// 用法：uuvdprobe --enable <displayID>
+if args.contains("--enable") {
+    guard let i = args.firstIndex(of: "--enable"), i + 1 < args.count,
+          let target = UInt32(args[i + 1]).map(CGDirectDisplayID.init) else {
+        print("用法：uuvdprobe --enable <displayID>"); exit(2)
+    }
+    typealias EnableFn = @convention(c) (CGDisplayConfigRef?, CGDirectDisplayID, Bool) -> CGError
+    guard let fn = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSConfigureDisplayEnabled") else {
+        print("❌ CGSConfigureDisplayEnabled 不可用"); exit(1)
+    }
+    let setEnabled = unsafeBitCast(fn, to: EnableFn.self)
+    let others = onlineDisplays().filter { $0 != target }
+    var cfg: CGDisplayConfigRef?
+    guard CGBeginDisplayConfiguration(&cfg) == .success else { print("❌ begin 失败"); exit(1) }
+    let e1 = setEnabled(cfg, target, true)
+    CGConfigureDisplayOrigin(cfg, target, 0, 0)
+    // 目标屏的点宽：用当前模式的逻辑宽度；禁用中的屏可能读不到模式，退回 1920
+    let w = (CGDisplayCopyDisplayMode(target).map { Int($0.width) } ?? 1920)
+    for (n, id) in others.enumerated() {
+        CGConfigureDisplayOrigin(cfg, id, Int32(w + n * 100), 0)
+    }
+    let err = CGCompleteDisplayConfiguration(cfg, .forSession)
+    if err != .success { CGCancelDisplayConfiguration(cfg) }
+    print(err == .success ? "✅ 已启用 #\(target) 并还原 (0,0)，其余屏右移" : "❌ 启用失败 CGError=\(err.rawValue)")
+    dump("启用后")
+    exit(err == .success ? 0 : 1)
+}
+
 let pixelW = args.count > 1 ? Int(args[1]) ?? 2360 : 2360
 let pixelH = args.count > 2 ? Int(args[2]) ?? 1640 : 1640
 let hold = args.count > 3 ? Double(args[3]) ?? 8 : 8
