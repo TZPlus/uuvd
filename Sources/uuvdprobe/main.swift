@@ -34,6 +34,13 @@ func dump(_ title: String) {
 
 if args.contains("--list") { dump("当前显示器"); exit(0) }
 
+if args.contains("--asleep") {
+    for id in onlineDisplays() {
+        print("#\(id) asleep=\(CGDisplayIsAsleep(id) == 1)")
+    }
+    exit(0)
+}
+
 if args.contains("--touch") {
     var cfg: CGDisplayConfigRef?
     let begin = CGBeginDisplayConfiguration(&cfg)
