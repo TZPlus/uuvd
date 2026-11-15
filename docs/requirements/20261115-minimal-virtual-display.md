@@ -30,6 +30,7 @@ UU远程 的 Mac 被控端没有「超级屏」功能，iPad 远程时黑边+字
 看门狗 LaunchAgent、设置窗口 UI、手机竖屏/窗口管理/手势、自动更新、推 UU远程 官方接口
 
 ## 遗留
-- 真机 iPad 联调（需用户参与）：辅助功能授权 → 填 config.json 设备名/分辨率 → iPad 连一次
+- ~~真机 iPad 联调~~ ✅ 2026-11-15 完成：三台设备（iPad Pro / MacBook Air M5 / REDMI K Pad 已配）链路端到端验证通过，含 disablePhysical 全链路
 - PR #10 的 DisplayRecoveryPowerGuard / 布局重试机制未吸收 → backlog
 - 推流信号在"UU 登录但空闲"时的形态未观察：若 UU 空闲也推流，capture 单独在场需加确认条件（当前未遇到，先记录）
+- 被 UU 推流过的虚拟屏释放后可能被 WindowServer 滞留数分钟（2026-11-15 实测 #17 约 10 分钟后自清），无害但会暂时出现在 UU 屏幕列表里
